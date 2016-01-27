@@ -83,6 +83,9 @@ getinterval(time_t s1, uint32_t ns1, time_t s2, uint32_t ns2,
  * It copies the program name because runprogram destroys the copy
  * it gets by passing it to vfs_open(). 
  */
+
+
+
 static
 void
 cmd_progthread(void *ptr, unsigned long nargs)
@@ -396,6 +399,17 @@ cmd_kheapstats(int nargs, char **args)
 	return 0;
 }
 
+extern uint32_t dbflags;
+
+static
+int 
+cmd_dth(int nargs, char **args)
+{
+	(void)nargs;
+	(void)args;
+	dbflags |= DB_THREADS;
+	return 0;
+}
 ////////////////////////////////////////
 //
 // Menus.
@@ -426,6 +440,7 @@ showmenu(const char *name, const char *x[])
 }
 
 static const char *opsmenu[] = {
+	"[dth]     DB_THREAD debug message   ",
 	"[s]       Shell                     ",
 	"[p]       Other program             ",
 	"[mount]   Mount a filesystem        ",
@@ -549,6 +564,9 @@ static struct {
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
+
+//	added for assignment 0
+	{ "dth",	cmd_dth },
 
 #if OPT_SYNCHPROBS
 	/* in-kernel synchronization problem(s) */
