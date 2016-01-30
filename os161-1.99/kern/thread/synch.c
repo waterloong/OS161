@@ -172,7 +172,7 @@ lock_create(const char *name)
 	}
 
 	spinlock_init(&lock->lk_lock);
-        lock->is_acquired = false;
+	lock->owner = NULL;
 
         return lock;
 }
@@ -195,41 +195,18 @@ lock_acquire(struct lock *lock)
         // Write this
         KASSERT(lock != NULL);
 
-        /*
-         * May not block in an interrupt handler.
-         *
-         * For robustness, always check, even if we can actually
-         * complete the P without blocking.
-         */
         KASSERT(curthread->t_in_interrupt == false);
 
 	spinlock_acquire(&lock->lk_lock);
-        while (lock->is_acquired) {
-		/*
-		 * Bridge to the wchan lock, so if someone else comes
-		 * along in V right this instant the wakeup can't go
-		 * through on the wchan until we've finished going to
-		 * sleep. Note that wchan_sleep unlocks the wchan.
-		 *
-		 * Note that we don't maintain strict FIFO ordering of
-		 * threads going through the semaphore; that is, we
-		 * might "get" it on the first try even if other
-		 * threads are waiting. Apparently according to some
-		 * textbooks semaphores must for some reason have
-		 * strict ordering. Too bad. :-)
-		 *
-		 * Exercise: how would you implement strict FIFO
-		 * ordering?
-		 */
+        while (lock->owner) {
 		wchan_lock(lock->lk_wchan);
 		spinlock_release(&lock->lk_lock);
                 wchan_sleep(lock->lk_wchan);
 
 		spinlock_acquire(&lock->lk_lock);
         }
-        KASSERT(!lock->is_acquired && lock->owner == NULL);
+        KASSERT(!lock->owner);
 	lock->owner = curthread;
-	lock->is_acquired = true;
 	spinlock_release(&lock->lk_lock);
 
 }
@@ -239,12 +216,11 @@ lock_release(struct lock *lock)
 {
         // Write this
         KASSERT(lock != NULL);
-
+	KASSERT(lock->owner == curthread);
 	spinlock_acquire(&lock->lk_lock);
 
-	lock->is_acquired = false;
 	lock->owner = NULL;
-        KASSERT(!lock->is_acquired);
+        KASSERT(!lock->owner);
 	wchan_wakeone(lock->lk_wchan);
 
 	spinlock_release(&lock->lk_lock);
@@ -258,7 +234,7 @@ lock_do_i_hold(struct lock *lock)
 	KASSERT(lock != NULL);
 	
 
-        return lock->is_acquired;//true; // dummy until code gets written
+        return lock->owner == curthread;
 }
 
 ////////////////////////////////////////////////////////////
@@ -283,7 +259,12 @@ cv_create(const char *name)
         }
         
         // add stuff here as needed
-        
+    	cv->cv_wchan = wchan_create(cv->cv_name);
+    	if (cv->cv_wchan == NULL) {
+		kfree(cv->cv_name);
+		kfree(cv);
+		return NULL;
+	}        
         return cv;
 }
 
@@ -293,7 +274,8 @@ cv_destroy(struct cv *cv)
         KASSERT(cv != NULL);
 
         // add stuff here as needed
-        
+	wchan_destroy(cv->cv_wchan);       
+ 
         kfree(cv->cv_name);
         kfree(cv);
 }
@@ -302,22 +284,31 @@ void
 cv_wait(struct cv *cv, struct lock *lock)
 {
         // Write this
-        (void)cv;    // suppress warning until code gets written
-        (void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL); 
+	KASSERT(lock_do_i_hold(lock));
+	wchan_lock(cv->cv_wchan);
+	lock_release(lock);
+	wchan_sleep(cv->cv_wchan);
+	lock_acquire(lock);
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
         // Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL);
+	KASSERT(lock_do_i_hold(lock)); // checks NULL inside
+	
+	wchan_wakeone(cv->cv_wchan);
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
 	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL);
+	KASSERT(lock_do_i_hold(lock)); // checks NULL inside
+	
+	wchan_wakeall(cv->cv_wchan);
+
 }
