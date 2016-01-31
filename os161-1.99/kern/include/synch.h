@@ -45,8 +45,8 @@
  */
 struct semaphore {
         char *sem_name;
-	struct wchan *sem_wchan;
-	struct spinlock sem_lock;
+		struct wchan *sem_wchan;
+		struct spinlock sem_lock;
         volatile int sem_count;
 };
 
@@ -76,9 +76,9 @@ struct lock {
         char *lk_name;
         // add what you need here
         // (don't forget to mark things volatile as needed)
-	volatile struct thread *owner;
-	struct wchan *lk_wchan;
-	struct spinlock lk_lock;
+		volatile struct thread *owner;
+		struct wchan *lk_wchan;
+		struct spinlock lk_lock;
 };
 
 struct lock *lock_create(const char *name);
@@ -118,7 +118,7 @@ struct cv {
         char *cv_name;
         // add what you need here
         // (don't forget to mark things volatile as needed)
-	struct wchan *cv_wchan;	
+		struct wchan *cv_wchan;	
 };
 
 struct cv *cv_create(const char *name);
