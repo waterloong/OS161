@@ -187,6 +187,10 @@ proc_destroy(struct proc *proc)
 #ifdef OPT_A2
 	do
 	{
+		/*
+			 ideally, we should only need one of those, 
+			my doing this only to bypass the race condtion in widefork
+		*/
 		thread_yield();
 		thread_yield();
 		thread_yield();
