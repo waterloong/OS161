@@ -187,19 +187,20 @@ proc_destroy(struct proc *proc)
 #ifdef OPT_A2
 	do
 	{
-		/*
-			 ideally, we should only need one of those, 
-			my doing this only to bypass the race condtion in widefork
-		*/
 		thread_yield();
-		thread_yield();
-		thread_yield();
-		thread_yield();
-		thread_yield();
-		thread_yield();
-		thread_yield();
+		
 	}
 	while(!wchan_isempty(proc->p_wait_cv->cv_wchan));
+	struct proc *parent = proc->p_parent;
+	if (parent)
+	{
+		lock_acquire(parent->p_wait_lock);
+		while (parent->p_is_alive)
+		{
+			cv_wait(parent->p_wait_cv, parent->p_wait_lock);
+		}
+		lock_release(parent->p_wait_lock);
+	}
 #endif
 	/*
          * note: some parts of the process structure, such as the address space,
@@ -255,7 +256,6 @@ proc_destroy(struct proc *proc)
 #ifdef OPT_A2
 	// remove from parent
 	spinlock_acquire(&proc->p_lock);
-	struct proc *parent = proc->p_parent;
 	if (parent != NULL) 
 	{
 		spinlock_acquire(&parent->p_lock);
