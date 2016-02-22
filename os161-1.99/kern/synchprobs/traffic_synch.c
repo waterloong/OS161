@@ -10,7 +10,7 @@
  before enter criticl sections, which brings no performance hit nayway
 */
 
-#define FAIR 2
+//#define FAIR 2
 
 #ifdef FAIR
 // fairness related definitions
@@ -18,7 +18,6 @@ static int waiting[4] = {0};
 static inline bool
 is_fair(Direction origin)
 {
-  return true;
   return ((waiting[origin] >= waiting[0]) + (waiting[origin] >= waiting[1]) + (waiting[origin] >= waiting[2]) + (waiting[origin] >= waiting[3]) > FAIR);
 }
 #endif
@@ -122,7 +121,9 @@ intersection_before_entry(Direction origin, Direction destination)
 
   //critical section
   lock_acquire(intersectionLock);
+#ifdef FAIR
   waiting[origin] ++;
+#endif
   while (
 #ifdef FAIR
     is_fair(origin) && 

@@ -196,7 +196,6 @@ lock_acquire(struct lock *lock)
         KASSERT(lock != NULL);
 
         KASSERT(curthread->t_in_interrupt == false);
-
 	spinlock_acquire(&lock->lk_lock);
         while (lock->owner) {
 		wchan_lock(lock->lk_wchan);
@@ -205,7 +204,7 @@ lock_acquire(struct lock *lock)
 
 		spinlock_acquire(&lock->lk_lock);
         }
-        KASSERT(!lock->owner);
+	KASSERT(lock->owner == NULL);
 	lock->owner = curthread;
 	spinlock_release(&lock->lk_lock);
 
@@ -220,7 +219,6 @@ lock_release(struct lock *lock)
 	spinlock_acquire(&lock->lk_lock);
 
 	lock->owner = NULL;
-        KASSERT(!lock->owner);
 	wchan_wakeone(lock->lk_wchan);
 
 	spinlock_release(&lock->lk_lock);
@@ -233,8 +231,7 @@ lock_do_i_hold(struct lock *lock)
         // Write this
 	KASSERT(lock != NULL);
 	
-
-        return lock->owner == curthread;
+	return lock->owner == curthread;
 }
 
 ////////////////////////////////////////////////////////////
@@ -261,10 +258,10 @@ cv_create(const char *name)
         // add stuff here as needed
     	cv->cv_wchan = wchan_create(cv->cv_name);
     	if (cv->cv_wchan == NULL) {
-		kfree(cv->cv_name);
-		kfree(cv);
+			kfree(cv->cv_name);
+			kfree(cv);
 		return NULL;
-	}        
+		}        
         return cv;
 }
 
@@ -273,8 +270,8 @@ cv_destroy(struct cv *cv)
 {
         KASSERT(cv != NULL);
 
-        // add stuff here as needed
-	wchan_destroy(cv->cv_wchan);       
+		// add stuff here as needed
+		wchan_destroy(cv->cv_wchan);       
  
         kfree(cv->cv_name);
         kfree(cv);
