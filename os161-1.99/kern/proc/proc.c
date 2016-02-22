@@ -42,6 +42,14 @@
  * process that will have more than one thread is the kernel process.
  */
 
+#include <opt-A2.h>
+
+#ifdef OPT_A2
+#include <limits.h>
+//need to come before including proc.h
+#define PROCINLINE
+#endif
+
 #include <types.h>
 #include <proc.h>
 #include <current.h>
@@ -50,6 +58,7 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
+#include <synch.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -69,7 +78,49 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
+#ifdef OPT_A2 
+struct procarray *process_table;
+struct lock *process_table_lock;
 
+bool 
+no_pid_left(void)
+{
+	bool result;
+	P(proc_count_mutex);
+	result = proc_count > PID_MAX + 1;
+	V(proc_count_mutex);
+	return result;
+}
+
+/*
+ * set PID for proc if possible. return true on success, false if all pids are used.
+ */
+static 
+bool
+set_pid(struct proc *new_proc) 
+{
+	KASSERT(new_proc != NULL);
+	if ( proc_count < PID_MAX + 2) 
+	{
+		lock_acquire(process_table_lock);
+		unsigned len = procarray_num(process_table);
+		for (unsigned i = 0; i < len; i ++) {
+			if (procarray_get(process_table, i) == NULL) 
+			{
+				procarray_set(process_table, i, new_proc);
+				new_proc->p_pid = i;
+				lock_release(process_table_lock);
+				return true;
+			}
+		}
+		procarray_add(process_table, new_proc, (unsigned *)&new_proc->p_pid);
+		lock_release(process_table_lock);
+		return true;
+	}
+	return false;
+}
+
+#endif // OPT_A2
 
 /*
  * Create a proc structure.
@@ -103,6 +154,26 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 
+#ifdef OPT_A2 
+	proc->p_parent = NULL;
+	proc->p_is_alive = true;
+	procarray_init(&proc->p_children);
+	proc->p_wait_lock = lock_create(proc->p_name);
+	if (proc->p_wait_lock == NULL) 
+	{
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->p_wait_cv = cv_create(proc->p_name);
+	if (proc->p_wait_cv == NULL) 
+	{
+		lock_destroy(proc->p_wait_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+#endif // OPT_A2
 	return proc;
 }
 
@@ -163,10 +234,53 @@ proc_destroy(struct proc *proc)
 	}
 #endif // UW
 
+#ifdef OPT_A2
+	// remove from parent
+	struct proc *parent = proc->p_parent;
+	if (parent != NULL) 
+	{
+		spinlock_acquire(&parent->p_lock);
+		for (unsigned i = 0; i < procarray_num(&parent->p_children); i ++ )
+		{
+			if (procarray_get(&parent->p_children, i) == proc) 
+			{
+				procarray_remove(&parent->p_children, i);
+				break;
+			}
+		}
+		spinlock_release(&parent->p_lock);
+	}
+
+	// unparent each child
+	spinlock_acquire(&proc->p_lock);
+	unsigned count = procarray_num(&proc->p_children);
+	while (count)
+	{
+		procarray_get(&proc->p_children, count - 1)->p_parent = NULL;	
+		procarray_remove(&proc->p_children, count - 1);
+		count = procarray_num(&proc->p_children);
+	}
+	spinlock_release(&proc->p_lock);
+
+	// remove from process table
+	lock_acquire(process_table_lock);
+	procarray_set(process_table, proc->p_pid, NULL);
+	lock_release(process_table_lock);
+
+#endif // OPT_A2
+
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
 
 	kfree(proc->p_name);
+
+#ifdef OPT_A2
+	// free up added fields
+	procarray_cleanup(&proc->p_children);
+	lock_destroy(proc->p_wait_lock);
+	cv_destroy(proc->p_wait_cv);
+#endif
+
 	kfree(proc);
 
 #ifdef UW
@@ -208,6 +322,22 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+
+#ifdef OPT_A2
+	process_table = procarray_create();
+	if ( !process_table) 
+	{
+		panic("could not create process table");
+	}
+	procarray_init(process_table);
+	process_table_lock = lock_create("Process Table Lock");
+	if ( !process_table_lock ) 
+	{
+		panic("could not create the lock for process table");
+	}
+	// add the kernel process, necessary?
+	procarray_add(process_table, kproc, NULL);
+#endif // OPT_A2 
 }
 
 /*
@@ -226,6 +356,21 @@ proc_create_runprogram(const char *name)
 	if (proc == NULL) {
 		return NULL;
 	}
+
+#ifdef OPT_A2
+	P(proc_count_mutex);
+	proc_count ++;
+	if ( !set_pid(proc)	) 
+	{
+		// When we run out of PIDs
+		proc_destroy(proc);
+		proc_count --;
+		V(proc_count_mutex);
+		return NULL;
+	}
+	V(proc_count_mutex);
+#endif // OPT_A2
+
 
 #ifdef UW
 	/* open the console - this should always succeed */
@@ -262,6 +407,11 @@ proc_create_runprogram(const char *name)
 	spinlock_release(&curproc->p_lock);
 #endif // UW
 
+#ifndef OPT_A2
+/*
+	proc_count, PID assignment and process_table are handled together 
+	at somewhere above. Because assigning PID relies on proc_count
+ */
 #ifdef UW
 	/* increment the count of processes */
         /* we are assuming that all procs, including those created by fork(),
@@ -270,7 +420,7 @@ proc_create_runprogram(const char *name)
 	proc_count++;
 	V(proc_count_mutex);
 #endif // UW
-
+#endif // OPT_A2
 	return proc;
 }
 

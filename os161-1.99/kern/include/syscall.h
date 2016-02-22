@@ -30,6 +30,8 @@
 #ifndef _SYSCALL_H_
 #define _SYSCALL_H_
 
+#include <opt-A2.h>
+#include <types.h>
 
 struct trapframe; /* from <machine/trapframe.h> */
 
@@ -65,5 +67,9 @@ int sys_getpid(pid_t *retval);
 int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval);
 
 #endif // UW
+
+#ifdef OPT_A2
+int sys_fork(struct trapframe *tf, pid_t *retval);
+#endif 
 
 #endif /* _SYSCALL_H_ */

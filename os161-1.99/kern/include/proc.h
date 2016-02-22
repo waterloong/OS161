@@ -38,6 +38,19 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include <opt-A2.h>
+
+#ifdef OPT_A2
+// declare array of struct proc pointers
+#ifndef PROCINLINE
+#define PROCINLINE INLINE
+#endif
+
+// the shortcut in the documentation doesnt work. have to do it this way according to piazza.
+DECLARRAY_BYTYPE(procarray, struct proc);
+DEFARRAY_BYTYPE(procarray, struct proc, PROCINLINE);
+#endif // OPT_A2
+
 
 struct addrspace;
 struct vnode;
@@ -69,10 +82,24 @@ struct proc {
 #endif
 
 	/* add more material here as needed */
+#ifdef OPT_A2
+	pid_t p_pid;
+	volatile int p_exit_code;
+	volatile bool p_is_alive;
+	struct proc *p_parent;
+	struct procarray p_children;
+	struct lock *p_wait_lock;
+	struct cv *p_wait_cv;
+#endif // OPT_A2
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;
+
+#ifdef OPT_A2
+extern struct procarray *process_table;
+extern struct lock *process_table_lock;
+#endif
 
 /* Semaphore used to signal when there are no more processes */
 #ifdef UW
@@ -100,5 +127,8 @@ struct addrspace *curproc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
 
+#ifdef OPT_A2
+bool no_pid_left (void);
+#endif
 
 #endif /* _PROC_H_ */
