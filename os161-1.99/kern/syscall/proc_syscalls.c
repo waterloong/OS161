@@ -25,6 +25,7 @@ void sys__exit(int exitcode) {
      an unused variable */
   (void)exitcode;
 
+
   DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
   KASSERT(curproc->p_addrspace != NULL);
@@ -90,19 +91,6 @@ sys_waitpid(pid_t pid,
   int exitstatus;
   int result;
 
-  /* this is just a stub implementation that always reports an
-     exit status of 0, regardless of the actual exit status of
-     the specified process.   
-     In fact, this will return 0 even if the specified process
-     is still running, and even if it never existed in the first place.
-
-     Fix this!
-  */
-
-  if (options != 0) {
-    return(EINVAL);
-  }
-
 #ifdef OPT_A2
 	lock_acquire(process_table_lock); // is this synchronization even necessary?
 	// make sure the process exist
@@ -114,7 +102,6 @@ sys_waitpid(pid_t pid,
 	}
 	lock_release(process_table_lock);
 
-	
 	// make sure the process is a child process
 	if (child->p_parent != curproc)
 	{
@@ -135,6 +122,21 @@ sys_waitpid(pid_t pid,
 
 	exitstatus = child->p_exit_code;
 #else
+
+  /* this is just a stub implementation that always reports an
+     exit status of 0, regardless of the actual exit status of
+     the specified process.   
+     In fact, this will return 0 even if the specified process
+     is still running, and even if it never existed in the first place.
+
+     Fix this!
+  */
+
+  if (options != 0) {
+    return(EINVAL);
+  }
+
+
   /* for now, just pretend the exitstatus is 0 */
   exitstatus = 0;
 #endif // OPT_A2 

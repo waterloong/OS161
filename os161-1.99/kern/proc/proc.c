@@ -59,6 +59,7 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 #include <synch.h>
+#include <wchan.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -183,6 +184,19 @@ proc_create(const char *name)
 void
 proc_destroy(struct proc *proc)
 {
+#ifdef OPT_A2
+	do
+	{
+		thread_yield();
+		thread_yield();
+		thread_yield();
+		thread_yield();
+		thread_yield();
+		thread_yield();
+		thread_yield();
+	}
+	while(!wchan_isempty(proc->p_wait_cv->cv_wchan));
+#endif
 	/*
          * note: some parts of the process structure, such as the address space,
          *  are destroyed in sys_exit, before we get here
@@ -236,6 +250,7 @@ proc_destroy(struct proc *proc)
 
 #ifdef OPT_A2
 	// remove from parent
+	spinlock_acquire(&proc->p_lock);
 	struct proc *parent = proc->p_parent;
 	if (parent != NULL) 
 	{
@@ -252,7 +267,6 @@ proc_destroy(struct proc *proc)
 	}
 
 	// unparent each child
-	spinlock_acquire(&proc->p_lock);
 	unsigned count = procarray_num(&proc->p_children);
 	while (count)
 	{
@@ -260,13 +274,13 @@ proc_destroy(struct proc *proc)
 		procarray_remove(&proc->p_children, count - 1);
 		count = procarray_num(&proc->p_children);
 	}
-	spinlock_release(&proc->p_lock);
 
 	// remove from process table
 	lock_acquire(process_table_lock);
 	procarray_set(process_table, proc->p_pid, NULL);
 	lock_release(process_table_lock);
 
+	spinlock_release(&proc->p_lock);
 #endif // OPT_A2
 
 	threadarray_cleanup(&proc->p_threads);
@@ -277,8 +291,9 @@ proc_destroy(struct proc *proc)
 #ifdef OPT_A2
 	// free up added fields
 	procarray_cleanup(&proc->p_children);
-	lock_destroy(proc->p_wait_lock);
+	
 	cv_destroy(proc->p_wait_cv);
+	lock_destroy(proc->p_wait_lock);
 #endif
 
 	kfree(proc);
