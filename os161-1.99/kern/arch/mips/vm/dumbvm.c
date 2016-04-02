@@ -57,8 +57,6 @@ static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 typedef struct
 {
 	paddr_t addr;	
-	// bool is_in_use;
-	// bool is_contiguous; // not sure why this is needed
 	unsigned long num_frame;
 } coremap;
 
@@ -83,7 +81,7 @@ vm_bootstrap(void)
 		num_frame --;
 	}
 
-	kcoremap = (coremap *)lo;
+	kcoremap = (coremap *)PADDR_TO_KVADDR(lo);
 	lo = lo + num_frame * sizeof(coremap);
 	while (lo % PAGE_SIZE) lo ++;
 
@@ -91,30 +89,33 @@ vm_bootstrap(void)
 	for (unsigned long i = 0; i < num_frame; i ++)
 	{
 		kcoremap[i].addr = current;
-		// kcoremap[i].is_in_use = false;
-		// kcoremap[i].is_contiguous = false;
 		current += PAGE_SIZE;		
 	}	
 #endif
 }
 
-// I didnt know C doesnt have function overload LOL
+// I dont know why C doesnt have function overload LOL
 static 
 paddr_t
 getppages_helper(unsigned long npages, unsigned long start)
 {
 	while (kcoremap[start].num_frame)
 	{
-		if (start + npages > num_frame) return 0; // alloc_kpages return 0 on failure is a confusing design
+		if (start + npages > num_frame) 
+		{
+			return 0; // alloc_kpages return 0 on failure is a confusing design
+		}
 		start += kcoremap[start].num_frame;
 	}
 	for (unsigned long i = start; i < npages; i ++)
 	{
-		if (kcoremap[i].num_frame) return getppages_helper(npages, i + kcoremap[i].num_frame);
+		if (kcoremap[i].num_frame)
+		{
+			return getppages_helper(npages, i + kcoremap[i].num_frame);
+		}
 	}
 	kcoremap[start].num_frame = npages;
 	// kcoremap[start].is_in_use = true;
-	spinlock_release(&stealmem_lock);
 	return kcoremap[start].addr;	
 }
 
@@ -130,15 +131,15 @@ getppages(unsigned long npages)
 #if OPT_A3
 	if (kcoremap)
 	{
-		return getppages_helper(npages, 0);	
+		addr = getppages_helper(npages, 0);	
 	}
 	else
 	{
 		addr = ram_stealmem(npages);
 	}
-#endif 
+#else
 	addr = ram_stealmem(npages);
-	
+#endif
 	spinlock_release(&stealmem_lock);
 	return addr;
 }
@@ -160,15 +161,24 @@ free_kpages(vaddr_t addr)
 {
 	/* nothing - leak the memory. */
 #if OPT_A3
+	
 	spinlock_acquire(&stealmem_lock);
+	if (addr > (uint32_t)kcoremap)
+	{
+		addr -= MIPS_KSEG0;
+	}
+	else
+	{
+		spinlock_release(&stealmem_lock);
+		return;
+	}
 	for (unsigned long i = 0; i < num_frame; i ++)
 	{
 		if (kcoremap[i].addr == addr)
 		{
 			//unsigned long npages = kcoremap[i].num_frame;
 			kcoremap[i].num_frame = 0;
-			spinlock_release(&stealmem_lock);
-			return;
+			break;
 		}
 	}
 	spinlock_release(&stealmem_lock);
@@ -348,6 +358,9 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+	free_kpages(as->as_pbase1);
+	free_kpages(as->as_pbase2);
+	free_kpages(as->as_stackpbase);
 	kfree(as);
 }
 
