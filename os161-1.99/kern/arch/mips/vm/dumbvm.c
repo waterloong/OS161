@@ -113,6 +113,7 @@ getppages_helper(unsigned long npages, unsigned long start)
 		}
 	}
 	kcoremap[start].num_frame = npages;
+//	kprintf("alloc: %d for %d at %d \n", kcoremap[start].addr, (int)kcoremap[start].num_frame, (int)start);
 	return kcoremap[start].addr;	
 }
 
@@ -163,7 +164,7 @@ free_kpages(vaddr_t addr)
 	{
 		if (kcoremap[i].addr == addr)
 		{
-			//unsigned long npages = kcoremap[i].num_frame;
+//			kprintf("free: %d for %d at %d \n", addr, (int)kcoremap[i].num_frame, (int)i);
 			kcoremap[i].num_frame = 0;
 			break;
 		}
@@ -348,10 +349,13 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
-	free_kpages(as->as_pbase1);
-	free_kpages(as->as_pbase2);
-	free_kpages(as->as_stackpbase);
-	kfree(as);
+	if (as)
+	{
+		if (as->as_pbase1) free_kpages(as->as_pbase1);
+		if (as->as_pbase2) free_kpages(as->as_pbase2);
+		if (as->as_stackpbase) free_kpages(as->as_stackpbase);
+		kfree(as);
+	}
 }
 
 void
