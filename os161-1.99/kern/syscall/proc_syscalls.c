@@ -390,6 +390,7 @@ be the 1st thing to do, as error handling in the middle part would require free 
 			curproc_setas(old_as);
 			as_activate();
 			as_destroy(as);
+			return result;
 		}
 		kfree(kargv[i]);
 		kargv[i] = (char*)stackptr;

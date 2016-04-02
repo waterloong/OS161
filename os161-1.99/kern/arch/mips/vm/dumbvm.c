@@ -37,6 +37,7 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <opt-A3.h>
 
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
@@ -51,11 +52,73 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+#if OPT_A3
+
+typedef struct
+{
+	paddr_t addr;	
+	// bool is_in_use;
+	// bool is_contiguous; // not sure why this is needed
+	unsigned long num_frame;
+} coremap;
+
+static coremap *kcoremap = NULL;
+static unsigned long num_frame; // unsigned long b/c getppages uses unsigned long
+// https://www.quora.com/Why-Is-there-almost-no-typedef-on-Linux-Kernel-code
+// LMAO
+#endif
+
+
 void
 vm_bootstrap(void)
 {
 	/* Do nothing. */
+#if OPT_A3
+	paddr_t hi, lo;
+	ram_getsize(&lo, &hi);
+	
+	num_frame = (hi - lo) / (PAGE_SIZE + sizeof(coremap));
+	if ( (lo + num_frame * sizeof(coremap)) % PAGE_SIZE  ) 
+	{
+		num_frame --;
+	}
+
+	kcoremap = (coremap *)lo;
+	lo = lo + num_frame * sizeof(coremap);
+	while (lo % PAGE_SIZE) lo ++;
+
+	paddr_t current = lo;
+	for (unsigned long i = 0; i < num_frame; i ++)
+	{
+		kcoremap[i].addr = current;
+		// kcoremap[i].is_in_use = false;
+		// kcoremap[i].is_contiguous = false;
+		current += PAGE_SIZE;		
+	}	
+#endif
 }
+
+// I didnt know C doesnt have function overload LOL
+static 
+paddr_t
+getppages_helper(unsigned long npages, unsigned long start)
+{
+	while (kcoremap[start].num_frame)
+	{
+		if (start + npages > num_frame) return 0; // alloc_kpages return 0 on failure is a confusing design
+		start += kcoremap[start].num_frame;
+	}
+	for (unsigned long i = start; i < npages; i ++)
+	{
+		if (kcoremap[i].num_frame) return getppages_helper(npages, i + kcoremap[i].num_frame);
+	}
+	kcoremap[start].num_frame = npages;
+	// kcoremap[start].is_in_use = true;
+	spinlock_release(&stealmem_lock);
+	return kcoremap[start].addr;	
+}
+
+
 
 static
 paddr_t
@@ -64,7 +127,16 @@ getppages(unsigned long npages)
 	paddr_t addr;
 
 	spinlock_acquire(&stealmem_lock);
-
+#if OPT_A3
+	if (kcoremap)
+	{
+		return getppages_helper(npages, 0);	
+	}
+	else
+	{
+		addr = ram_stealmem(npages);
+	}
+#endif 
 	addr = ram_stealmem(npages);
 	
 	spinlock_release(&stealmem_lock);
@@ -87,8 +159,22 @@ void
 free_kpages(vaddr_t addr)
 {
 	/* nothing - leak the memory. */
-
+#if OPT_A3
+	spinlock_acquire(&stealmem_lock);
+	for (unsigned long i = 0; i < num_frame; i ++)
+	{
+		if (kcoremap[i].addr == addr)
+		{
+			//unsigned long npages = kcoremap[i].num_frame;
+			kcoremap[i].num_frame = 0;
+			spinlock_release(&stealmem_lock);
+			return;
+		}
+	}
+	spinlock_release(&stealmem_lock);
+#else
 	(void)addr;
+#endif
 }
 
 void
@@ -114,14 +200,22 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	struct addrspace *as;
 	int spl;
 
+#if OPT_A3
+	bool is_text_segment = false; 
+#endif
+
 	faultaddress &= PAGE_FRAME;
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
+#if OPT_A3
+		return EFAULT;
+#else
 		/* We always create pages read-write, so we can't get this */
 		panic("dumbvm: got VM_FAULT_READONLY\n");
+#endif
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
 		break;
@@ -168,8 +262,12 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
 	stacktop = USERSTACK;
 
+	// course note page 21 
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
 		paddr = (faultaddress - vbase1) + as->as_pbase1;
+#if OPT_A3
+		is_text_segment = true;
+#endif
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
 		paddr = (faultaddress - vbase2) + as->as_pbase2;
@@ -195,14 +293,37 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		ehi = faultaddress;
 		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
 		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
+#if OPT_A3
+		if (is_text_segment && as->as_is_loaded)
+		{
+			elo &= ~TLBLO_DIRTY;
+		}
+#endif
 		tlb_write(ehi, elo, i);
 		splx(spl);
 		return 0;
 	}
 
+#if OPT_A3
+/*
+If the TLB is full, call tlb_random to write the entry into a
+random TLB slot.
+*/
+	ehi = faultaddress;
+	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+	DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
+	if (is_text_segment && as->as_is_loaded)
+	{
+		elo &= ~TLBLO_DIRTY;
+	}
+	tlb_random(ehi, elo);
+	splx(spl);
+	return 0;
+#else
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
 	return EFAULT;
+#endif
 }
 
 struct addrspace *
@@ -339,6 +460,7 @@ int
 as_complete_load(struct addrspace *as)
 {
 	(void)as;
+	as->as_is_loaded = true;
 	return 0;
 }
 

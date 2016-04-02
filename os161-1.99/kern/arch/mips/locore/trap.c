@@ -39,6 +39,11 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
+#include <opt-A3.h>
+#include <addrspace.h>
+#include <proc.h>
+#include <synch.h>
+#include <kern/wait.h>
 
 
 /* in exception.S */
@@ -108,13 +113,52 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 		break;
 	}
 
+// copied from sys__exit
+#if OPT_A3
+	int exitcode = sig;
+  struct addrspace *as;
+  struct proc *p = curproc;
+
+  DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+
+  KASSERT(curproc->p_addrspace != NULL);
+  as_deactivate();
+  /*
+   * clear p_addrspace before calling as_destroy. Otherwise if
+   * as_destroy sleeps (which is quite possible) when we
+   * come back we'll be calling as_activate on a
+   * half-destroyed address space. This tends to be
+   * messily fatal.
+   */
+  as = curproc_setas(NULL);
+  as_destroy(as);
+
+	p->p_exit_code = _MKWAIT_SIG(exitcode);
+	p->p_is_alive = false;
+	lock_acquire(p->p_wait_lock);
+	cv_broadcast(p->p_wait_cv, p->p_wait_lock);
+	lock_release(p->p_wait_lock);
+	
+  /* detach this thread from its process */
+  /* note: curproc cannot be used after this call */
+  proc_remthread(curthread);
+
+  /* if this is the last user process in the system, proc_destroy()
+     will wake up the kernel menu thread */
+  proc_destroy(p);
+  
+  thread_exit();
+  /* thread_exit() does not return, so we should never get here */
+  panic("return from thread_exit in sys_exit\n");
 	/*
 	 * You will probably want to change this.
 	 */
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
+#else
 	panic("I don't know how to handle this\n");
+#endif
 }
 
 /*
