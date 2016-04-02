@@ -192,7 +192,7 @@ enter_forked_process(struct trapframe *tf)
 	forked_tf.tf_a3 = 0; // signal no error, see above
 	forked_tf.tf_v0 = 0; // return value, see above
 	forked_tf.tf_epc += 4; // increment PC, see above
-	
+	as_activate();	
 	mips_usermode(&forked_tf);
 
 	panic("should never reach here");

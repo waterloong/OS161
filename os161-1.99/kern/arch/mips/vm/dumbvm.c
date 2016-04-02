@@ -62,8 +62,6 @@ typedef struct
 
 static coremap *kcoremap = NULL;
 static unsigned long num_frame; // unsigned long b/c getppages uses unsigned long
-// https://www.quora.com/Why-Is-there-almost-no-typedef-on-Linux-Kernel-code
-// LMAO
 #endif
 
 
@@ -115,7 +113,6 @@ getppages_helper(unsigned long npages, unsigned long start)
 		}
 	}
 	kcoremap[start].num_frame = npages;
-	// kcoremap[start].is_in_use = true;
 	return kcoremap[start].addr;	
 }
 
@@ -161,17 +158,7 @@ free_kpages(vaddr_t addr)
 {
 	/* nothing - leak the memory. */
 #if OPT_A3
-	
 	spinlock_acquire(&stealmem_lock);
-	if (addr > (uint32_t)kcoremap)
-	{
-		addr -= MIPS_KSEG0;
-	}
-	else
-	{
-		spinlock_release(&stealmem_lock);
-		return;
-	}
 	for (unsigned long i = 0; i < num_frame; i ++)
 	{
 		if (kcoremap[i].addr == addr)
@@ -351,7 +338,10 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
-
+	
+#if OPT_A3
+	as->as_is_loaded = false;
+#endif
 	return as;
 }
 
