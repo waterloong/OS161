@@ -70,25 +70,26 @@ vm_bootstrap(void)
 {
 	/* Do nothing. */
 #if OPT_A3
+	spinlock_acquire(&stealmem_lock);
 	paddr_t hi, lo;
 	ram_getsize(&lo, &hi);
 	
 	num_frame = (hi - lo) / (PAGE_SIZE + sizeof(coremap));
-	if ( (lo + num_frame * sizeof(coremap)) % PAGE_SIZE  ) 
-	{
-		num_frame --;
-	}
-
 	kcoremap = (coremap *)PADDR_TO_KVADDR(lo);
 	lo = lo + num_frame * sizeof(coremap);
+
 	while (lo % PAGE_SIZE) lo ++;
+
+	num_frame = (hi - lo) / PAGE_SIZE;
 
 	paddr_t current = lo;
 	for (unsigned long i = 0; i < num_frame; i ++)
 	{
 		kcoremap[i].addr = current;
+		kcoremap[i].num_frame = 0;
 		current += PAGE_SIZE;		
 	}	
+	spinlock_release(&stealmem_lock);
 #endif
 }
 
@@ -97,7 +98,7 @@ static
 paddr_t
 getppages_helper(unsigned long npages, unsigned long start)
 {
-	while (kcoremap[start].num_frame)
+	while (kcoremap[start].num_frame > 0)
 	{
 		if (start + npages > num_frame) 
 		{
@@ -107,13 +108,13 @@ getppages_helper(unsigned long npages, unsigned long start)
 	}
 	for (unsigned long i = start; i < npages; i ++)
 	{
-		if (kcoremap[i].num_frame)
+		if (kcoremap[i].num_frame > 0)
 		{
 			return getppages_helper(npages, i + kcoremap[i].num_frame);
 		}
 	}
 	kcoremap[start].num_frame = npages;
-//	kprintf("alloc: %d for %d at %d \n", kcoremap[start].addr, (int)kcoremap[start].num_frame, (int)start);
+	//kprintf("alloc:  %04x for %d at %d \n", kcoremap[start].addr, (int)kcoremap[start].num_frame, (int)start);
 	return kcoremap[start].addr;	
 }
 
@@ -124,7 +125,6 @@ paddr_t
 getppages(unsigned long npages)
 {
 	paddr_t addr;
-
 	spinlock_acquire(&stealmem_lock);
 #if OPT_A3
 	if (kcoremap)
@@ -160,11 +160,12 @@ free_kpages(vaddr_t addr)
 	/* nothing - leak the memory. */
 #if OPT_A3
 	spinlock_acquire(&stealmem_lock);
+	paddr_t paddr = addr - MIPS_KSEG0;
 	for (unsigned long i = 0; i < num_frame; i ++)
 	{
-		if (kcoremap[i].addr == addr)
+		if (kcoremap[i].addr == paddr || kcoremap[i].addr == addr)
 		{
-//			kprintf("free: %d for %d at %d \n", addr, (int)kcoremap[i].num_frame, (int)i);
+	//		kprintf("free: %04x for %d at %d, %04x \n", addr, (int)kcoremap[i].num_frame, (int)i, 0);//((int*)addr)[0]);
 			kcoremap[i].num_frame = 0;
 			break;
 		}
@@ -346,6 +347,10 @@ as_create(void)
 	return as;
 }
 
+static int wtf(int dummy) {
+	int dummy2 = MIPS_KSEG0;
+	return dummy - dummy2;
+}
 void
 as_destroy(struct addrspace *as)
 {
@@ -353,6 +358,9 @@ as_destroy(struct addrspace *as)
 	{
 		if (as->as_pbase1) free_kpages(as->as_pbase1);
 		if (as->as_pbase2) free_kpages(as->as_pbase2);
+//		kprintf("stackptr: %04x\n", as->as_stackpbase);
+		int dummy = as->as_stackpbase;
+		dummy = wtf(dummy);
 		if (as->as_stackpbase) free_kpages(as->as_stackpbase);
 		kfree(as);
 	}
